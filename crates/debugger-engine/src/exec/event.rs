@@ -53,17 +53,12 @@ impl PartialOrd for Event {
 }
 
 impl Ord for Event {
+    /// Orders events by [`EventId`], the key that [`PartialEq`] and [`Hash`] use.
+    ///
+    /// A named event and an [`Event::Unknown`] carrying its ID are equal, so ordering by name
+    /// could not be total: there is no name to compare for an unknown event.
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        use core::cmp::Ordering;
-        if self.as_event_id() == other.as_event_id() {
-            return Ordering::Equal;
-        }
-        match (self, other) {
-            (Self::Unknown(a), Self::Unknown(b)) => a.cmp(b),
-            (Self::Unknown(_), _) => Ordering::Greater,
-            (_, Self::Unknown(_)) => Ordering::Less,
-            (a, b) => a.as_event_name().unwrap().as_str().cmp(b.as_event_name().unwrap().as_str()),
-        }
+        self.as_event_id().cmp(&other.as_event_id())
     }
 }
 

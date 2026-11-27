@@ -40,22 +40,50 @@ fn event_metadata_covers_builtin_custom_and_unknown_events() {
 }
 
 #[test]
-#[cfg(feature = "std")]
-fn events_order_by_name_with_unknown_values_last() {
-    let custom = Event::from(EventName::new("test::custom"));
-    let earlier = Event::from(EventName::new("test::alpha"));
-    assert!(earlier < custom);
-    assert!(custom > earlier);
-    assert_eq!(custom.cmp(&custom), core::cmp::Ordering::Equal);
-    let unknown = Event::Unknown(EventId::from_u64(1));
-    assert!(Event::FrameStart < unknown);
-    assert!(custom < unknown);
-    assert_eq!(unknown, Event::Unknown(EventId::from_u64(1)));
-    assert!(unknown > Event::FrameEnd);
+fn event_order_is_total_and_agrees_with_equality() {
+    let named = EventName::new("test::a");
+    let events = [
+        Event::FrameStart,
+        Event::FrameEnd,
+        Event::PrintLn,
+        Event::from(named.clone()),
+        Event::from(EventName::new("test::b")),
+        Event::Unknown(named.to_event_id()),
+        Event::Unknown(PRINTLN_EVENT.to_event_id()),
+        Event::Unknown(EventId::from_u64(0)),
+        Event::Unknown(EventId::from_u64(u64::MAX)),
+    ];
 
-    let mut first = DefaultHasher::new();
-    unknown.hash(&mut first);
-    let mut second = DefaultHasher::new();
-    Event::Unknown(EventId::from_u64(1)).hash(&mut second);
-    assert_eq!(first.finish(), second.finish());
+    for a in &events {
+        for b in &events {
+            assert_eq!(a.cmp(b) == core::cmp::Ordering::Equal, a == b, "{a:?} vs {b:?}");
+            assert_eq!(a.cmp(b), b.cmp(a).reverse(), "{a:?} vs {b:?}");
+            assert_eq!(a.partial_cmp(b), Some(a.cmp(b)));
+            for c in &events {
+                if a <= b && b <= c {
+                    assert!(a <= c, "{a:?} <= {b:?} <= {c:?} but not {a:?} <= {c:?}");
+                }
+            }
+        }
+    }
+
+    // The case from #4264: a named event, the same event decoded from its ID, and a third event.
+    let a = Event::from(named.clone());
+    let c = Event::from(named.to_event_id());
+    let b = Event::from(EventName::new("test::b"));
+    assert_eq!(a.cmp(&c), core::cmp::Ordering::Equal);
+    assert_eq!(a.cmp(&b), c.cmp(&b));
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn equal_events_hash_equally() {
+    let named = EventName::new("test::custom");
+    let hash = |event: &Event| {
+        let mut hasher = DefaultHasher::new();
+        event.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_eq!(hash(&Event::from(named.clone())), hash(&Event::Unknown(named.to_event_id())));
+    assert_eq!(hash(&Event::PrintLn), hash(&Event::Unknown(PRINTLN_EVENT.to_event_id())));
 }
