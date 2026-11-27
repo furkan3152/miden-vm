@@ -1059,11 +1059,13 @@ mod tests {
     fn builder_indices_follow_trimmed_file_paths() {
         let mut builder = PackageDebugInfoBuilder::default();
         let original = builder.add_file(Uri::new("/work/a.masm"), None);
-        let trimmed_path = builder.add_string("a.masm");
+        builder.add_string("a.masm");
 
         builder
             .debug_info_mut()
             .trim_file_paths(|path| path.strip_prefix("/work/").map(Arc::from));
+        // Trimming drops the unreferenced original path and renumbers the strings after it.
+        let trimmed_path = builder.get_string_index("a.masm").unwrap();
         assert_eq!(builder.get_file_index_by_path_index(trimmed_path), Some(original));
 
         // The original file row now points at the trimmed path, so re-adding the original file

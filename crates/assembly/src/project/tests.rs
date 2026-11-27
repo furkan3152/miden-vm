@@ -651,6 +651,17 @@ end
             "package debug path remained absolute: {path}"
         );
     }
+    for string in debug_info.strings().iter() {
+        assert!(
+            !string.contains(tempdir_prefix.as_str()),
+            "debug string kept the path: {string}"
+        );
+    }
+    let bytes = package.to_bytes();
+    assert!(
+        !bytes.windows(tempdir_prefix.len()).any(|w| w == tempdir_prefix.as_bytes()),
+        "serialized package kept the absolute source path"
+    );
 }
 
 #[test]

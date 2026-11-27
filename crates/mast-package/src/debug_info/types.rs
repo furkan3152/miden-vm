@@ -2379,6 +2379,84 @@ mod tests {
     }
 
     #[test]
+    fn trimming_file_paths_drops_the_unreferenced_original_path() {
+        let mut builder = PackageDebugInfoBuilder::default();
+        let file_idx = builder.add_file(Uri::new("/workspace/src/main.masm"), None);
+        let function_name = builder.add_string("entry");
+        let linkage_name = builder.add_string("::app::entry");
+        let function_idx = builder.add_function(
+            DebugFunctionInfo::new(
+                None,
+                function_name,
+                file_idx,
+                LineNumber::new(1).unwrap(),
+                ColumnNumber::new(1).unwrap(),
+                Word::default(),
+            )
+            .with_linkage_name(linkage_name),
+        );
+        let struct_name = builder.add_string("Point");
+        let field_name = builder.add_string("x");
+        let felt = builder.add_type(DebugTypeInfo::Primitive(DebugPrimitiveType::Felt));
+        let struct_idx = builder.add_type(DebugTypeInfo::Struct {
+            name_idx: struct_name,
+            size: 4,
+            fields: vec![DebugFieldInfo {
+                name_idx: field_name,
+                type_idx: felt,
+                offset: 0,
+            }],
+        });
+        assert!(builder.add_error_message(7, Arc::from("boom")));
+        let context_name = builder.add_string("app::entry");
+        let op_name = builder.add_string("add");
+        let var_name = builder.add_string("y");
+        let mut node = source_node(MastNodeId::new_unchecked(0), Vec::new(), 0, 1);
+        node.asm_ops.push(DebugSourceAsmOp::new(0, None, context_name, op_name, 1));
+        node.debug_vars.push(DebugSourceVar {
+            op_idx: 0,
+            name_idx: var_name,
+            type_id: None,
+            arg_idx: None,
+            location_idx: None,
+            value_location: DebugVarLocation::Stack(0),
+        });
+        let node_idx = builder.add_node(node).unwrap();
+        let mut debug_info = *builder.build();
+
+        debug_info.trim_file_paths(|path| path.strip_prefix("/workspace/").map(Arc::from));
+
+        assert!(
+            debug_info.strings().iter().all(|string| !string.contains("/workspace")),
+            "the untrimmed path is still in the string table: {:?}",
+            debug_info.strings()
+        );
+        let string = |idx| debug_info.get_string(idx).unwrap();
+        assert_eq!(string(debug_info[file_idx].path_idx).as_ref(), "src/main.masm");
+        let function = &debug_info[function_idx];
+        assert_eq!(string(function.name_idx).as_ref(), "entry");
+        assert_eq!(
+            string(function.linkage_name_idx.into_option().unwrap()).as_ref(),
+            "::app::entry"
+        );
+        let DebugTypeInfo::Struct { name_idx, fields, .. } = &debug_info[struct_idx] else {
+            panic!("expected a struct type");
+        };
+        assert_eq!(string(*name_idx).as_ref(), "Point");
+        assert_eq!(string(fields[0].name_idx).as_ref(), "x");
+        assert_eq!(debug_info.error_message(7).as_deref(), Some("boom"));
+        let node = debug_info.source_node(node_idx).unwrap();
+        assert_eq!(string(node.asm_ops[0].context_name_idx).as_ref(), "app::entry");
+        assert_eq!(string(node.asm_ops[0].op_name_idx).as_ref(), "add");
+        assert_eq!(string(node.debug_vars[0].name_idx).as_ref(), "y");
+
+        let bytes = miden_core::serde::Serializable::to_bytes(&debug_info);
+        let decoded: PackageDebugInfo =
+            miden_core::serde::Deserializable::read_from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, debug_info);
+    }
+
+    #[test]
     fn test_debug_source_map_inline_calls_are_keyed_by_source_operation() {
         let inline_a = DebugSourceInlineCall {
             op_idx: 3,

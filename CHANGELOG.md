@@ -30,6 +30,7 @@
 
 #### Fixes
 
+- Fixed `trim-paths` leaving the absolute path of each trimmed source file in the debug string table of assembled packages, which made `.masp` bytes depend on the checkout directory. Original paths that no record references after trimming are now removed ([#4250](https://github.com/0xMiden/miden-vm/issues/4250)).
 - Fixed `miden-format` writing signature commas into a preceding item's trailing comment, which produced MASM that no longer parsed. A trailing comma before `)` no longer makes signature wrapping flip between runs ([#4116](https://github.com/0xMiden/miden-vm/issues/4116)).
 - Fixed `PartialMmr::untrack` panicking in debug builds on a leaf position invalid for the forest. The position is now validated against the forest before `InOrderIndex::from_leaf_pos` runs, so invalid positions return the documented empty vec ([#4257](https://github.com/0xMiden/miden-vm/pull/4257)).
 - Fixed `Forest::trees_larger_than(u32::MAX)` panicking in debug builds and returning the input forest unchanged in release builds. It now returns the empty forest, since no tree has an index larger than `u32::MAX` ([#4259](https://github.com/0xMiden/miden-vm/pull/4259)).

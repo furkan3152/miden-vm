@@ -332,6 +332,11 @@ impl<Exec: Idx, Src: Idx> DebugInfo<Exec, Src> {
     /// If `trimmer` returns `None`, the file path is left unmodified. Otherwise, the returned path
     /// is interned and the corresponding file records are retargeted to it. Other debug records
     /// which reference the original string are left unchanged.
+    ///
+    /// An original path that no record references after retargeting is removed from the string
+    /// table, so the untrimmed path is not serialized. Removing a string shifts the indices of the
+    /// strings after it, and every record in this debug info is updated accordingly; string
+    /// indices obtained before the call must not be reused.
     pub fn trim_file_paths(&mut self, mut trimmer: impl FnMut(&str) -> Option<Arc<str>>) {
         use hashbrown::hash_map::Entry;
 
@@ -371,6 +376,95 @@ impl<Exec: Idx, Src: Idx> DebugInfo<Exec, Src> {
                 new_path_idx
             };
             file.path_idx = new_path_idx;
+        }
+
+        self.remove_unreferenced_strings(
+            remapped_paths
+                .iter()
+                .filter(|(old, new)| old != new)
+                .map(|(old, _)| *old)
+                .collect(),
+        );
+    }
+
+    /// Removes the strings in `candidates` that no record references, then renumbers the
+    /// remaining strings and every string index stored in this debug info.
+    fn remove_unreferenced_strings(&mut self, mut candidates: FxHashSet<DebugStringIdx>) {
+        if candidates.is_empty() {
+            return;
+        }
+        self.for_each_string_index_mut(|index| {
+            candidates.remove(index);
+        });
+        if candidates.is_empty() {
+            return;
+        }
+
+        let mut new_indices = Vec::with_capacity(self.strings.len());
+        let mut kept = Vec::with_capacity(self.strings.len() - candidates.len());
+        for (index, string) in core::mem::take(&mut self.strings).into_iter().enumerate() {
+            let index = DebugStringIdx::from(index as u32);
+            if candidates.contains(&index) {
+                new_indices.push(None);
+            } else {
+                new_indices.push(Some(DebugStringIdx::from(kept.len() as u32)));
+                kept.push(string);
+            }
+        }
+        self.strings = IndexVec::try_from(kept).expect("string table only shrinks");
+        // An index past the end of the table stays past the end, since the table only shrinks.
+        self.for_each_string_index_mut(|index| {
+            if let Some(new_index) = new_indices.get(index.to_usize()) {
+                *index = new_index.expect("a removed string is not referenced");
+            }
+        });
+    }
+
+    /// Calls `f` with every string index stored in this debug info.
+    fn for_each_string_index_mut(&mut self, mut f: impl FnMut(&mut DebugStringIdx)) {
+        for file in self.files.iter_mut() {
+            f(&mut file.path_idx);
+        }
+        for error_message in self.error_messages.iter_mut() {
+            f(&mut error_message.message);
+        }
+        for function in self.functions.iter_mut() {
+            f(&mut function.name_idx);
+            if let Ok(Some(mut linkage_name_idx)) = function.linkage_name_idx.try_into_option() {
+                f(&mut linkage_name_idx);
+                function.linkage_name_idx = Some(linkage_name_idx).into();
+            }
+        }
+        for ty in self.types.iter_mut() {
+            match ty {
+                DebugTypeInfo::Struct { name_idx, fields, .. } => {
+                    f(name_idx);
+                    for field in fields.iter_mut() {
+                        f(&mut field.name_idx);
+                    }
+                },
+                DebugTypeInfo::Enum { name_idx, variants, .. } => {
+                    f(name_idx);
+                    for variant in variants.iter_mut() {
+                        f(&mut variant.name_idx);
+                    }
+                },
+                DebugTypeInfo::Primitive(_)
+                | DebugTypeInfo::Pointer { .. }
+                | DebugTypeInfo::Array { .. }
+                | DebugTypeInfo::Function { .. }
+                | DebugTypeInfo::Unknown
+                | DebugTypeInfo::Variadic => {},
+            }
+        }
+        for node in self.nodes.iter_mut() {
+            for asm_op in node.asm_ops.iter_mut() {
+                f(&mut asm_op.context_name_idx);
+                f(&mut asm_op.op_name_idx);
+            }
+            for debug_var in node.debug_vars.iter_mut() {
+                f(&mut debug_var.name_idx);
+            }
         }
     }
 
